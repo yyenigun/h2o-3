@@ -63,6 +63,7 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
   private transient GlrmLoss[] _lossFunc;
 
   private ArrayList<Integer> _binaryColumnIndices;  // store binary columns using binary loss functions.
+  boolean _wideDataset = false;  // default false.  If true, will return T(A)=XY.
 
   @Override protected GLRMDriver trainModelImpl() { return new GLRMDriver(); }
   @Override public ModelCategory[] can_build() { return new ModelCategory[]{ModelCategory.Clustering}; }
@@ -82,6 +83,13 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
               + ") - try reducing k, the number of columns and/or the number of categorical factors.";
       error("_train", msg);
     }
+  }
+
+  /*
+  Set value of wideDataset.  Note that this routine is used for test purposes only and not for users.
+  */
+  public void setWideDataset(boolean isWide) {
+    _wideDataset = isWide;
   }
   //--------------------------------------------------------------------------------------------------------------------
   // Model initialization
