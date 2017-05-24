@@ -8,7 +8,7 @@ test.pca.slow <- function() {
   data = data[,-2887]
 
   ptm <- proc.time()
-  mm = h2o.prcomp(data,transform = "STANDARDIZE",k =1504, pca_method="GLRM", , use_all_factor_levels=TRUE)
+  mm = h2o.prcomp(data,transform = "STANDARDIZE",k =1504, pca_method="GLRM", use_all_factor_levels=TRUE)
   h2otimepassed = proc.time() - ptm
   print(h2otimepassed)
   h2o.rm(mm)
