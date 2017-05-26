@@ -7,7 +7,13 @@ test.pca.slow <- function() {
   data = h2o.uploadFile(locate("bigdata/laptop/jira/re0.wc.arff.txt.zip"),destination_frame = "data",header = T)
   data = data[,-2887]
 
-#  ptm <- proc.time()
+  data2 = as.data.frame(data)
+  ptm <- proc.time()
+  fitR <- prcomp(data2, center = T, scale. = T)
+  timepassed = proc.time() - ptm
+  print(timepassed)
+
+  #  ptm <- proc.time()
 #  mm = h2o.prcomp(data,transform = "STANDARDIZE",k =1504, pca_method="GLRM", use_all_factor_levels=TRUE)
 #  h2otimepassed = proc.time() - ptm
 #  print(h2otimepassed)
@@ -34,12 +40,6 @@ test.pca.slow <- function() {
   print(h2otimepassed)
   h2o.rm(mm)
   
-  data = read.csv(locate("bigdata/laptop/jira/re0.wc.arff.txt.zip"))
-  data = data[,-2887]
-  ptm <- proc.time()
-  fitR <- prcomp(data, center = T, scale. = T)
-  timepassed = proc.time() - ptm
-  print(timepassed)
 
 
 }
