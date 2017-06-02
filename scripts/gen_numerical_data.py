@@ -30,7 +30,7 @@ def gen_data():
     # save the correct sequence before shuffling for comparison purpose
     bottom20FrameL = h2o.H2OFrame(python_obj=zip(tempL))
     bottom20FrameF = h2o.H2OFrame(python_obj=zip(tempF))
-    h2o.download_csv(bottom20FrameL.cbind(bottom20FrameF), "/Users/wendycwong/temp/Top20Per.csv" )
+    h2o.download_csv(bottom20FrameL.cbind(bottom20FrameF), "/Users/wendycwong/temp/Bottom20Per.csv" )
 
     tempL = intA[int(round(len(intA)*0.8)):len(intA)]
     tempL.sort()
@@ -38,7 +38,7 @@ def gen_data():
     tempF.sort()
     bottom20FrameL = h2o.H2OFrame(python_obj=zip(tempL))
     bottom20FrameF = h2o.H2OFrame(python_obj=zip(tempF))
-    h2o.download_csv(bottom20FrameL.cbind(bottom20FrameF), "/Users/wendycwong/temp/Bottom20Per.csv" )
+    h2o.download_csv(bottom20FrameL.cbind(bottom20FrameF), "/Users/wendycwong/temp/Top20Per.csv" )
 
 
     # repeat the columns a few times to seriously test the algo with duplicated data.
@@ -127,10 +127,11 @@ def genRandomData(intA, floatA, sizeMat):
         floatA.append(-1.0*uniform(tempInt, tempIntN))
 
 def genStaticData(intA, floatA, upperBoundL, lowBoundF, upperBoundF, fMult):
-    for val in range(upperBoundF, lowBoundF, -1):
+    for val in range(lowBoundF, upperBoundF):
         floatA.append(val*fMult)
         intA.append(upperBoundL)
         upperBoundL=upperBoundL-1
+    intA.reverse()
 
 def main(argv):
     h2o.init(strict_version_check=False)

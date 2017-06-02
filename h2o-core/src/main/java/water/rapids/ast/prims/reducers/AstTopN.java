@@ -10,8 +10,7 @@ import water.rapids.ast.AstPrimitive;
 import water.rapids.ast.AstRoot;
 import water.rapids.vals.ValFrame;
 
-import java.util.ArrayList;
-import java.util.TreeMap;
+import java.util.PriorityQueue;
 
 import static java.lang.StrictMath.min;
 
@@ -45,7 +44,7 @@ public class AstTopN extends AstPrimitive {
   }
 
   @Override
-  public ValFrame apply(Env env, Env.StackHelp stk, AstRoot[] asts) {
+  public ValFrame apply(Env env, Env.StackHelp stk, AstRoot[] asts) { // implementation with PriorityQueue
     Frame frOriginal = stk.track(asts[1].exec(env)).getFrame(); // get the 2nd argument and convert it to a Frame
     int colIndex = (int) stk.track(asts[2].exec(env)).getNum();     // column index of interest
     double nPercent = stk.track(asts[3].exec(env)).getNum();        //  top or bottom percentage of row to return
@@ -61,154 +60,108 @@ public class AstTopN extends AstPrimitive {
     assert frOriginal.vec(colIndex).isNumeric();        // make sure we are dealing with numerical column only
 
     String[] finalColumnNames = {"Original_Row_Indices", frOriginal.name(colIndex)}; // set output frame names
-    GrabTopN grabTask = new GrabTopN(finalColumnNames, numRows, (getBottomN==0));
+    GrabTopNPQ grabTask = new GrabTopNPQ(finalColumnNames, numRows, (getBottomN==0));
     grabTask.doAll(frOriginal.vec(colIndex));
     return new ValFrame(grabTask._sortedOut);
   }
 
-  /*
-   Here is the plan:
-   1. For each chunk (inside each map function of our MRTask), put all elements into a sorted heap with key as the
-    column value to grab and original row indices (in an array to deal with duplicated values) as the value.  At
-    the end of map, reduce the sorted heap to size N percent rows.
-   2. Inside reduce, make sure you combine the heaps and again reduce the sorted heap back to size N percent rows.
-   3. Inside the postGlobal, copy the heap (key, values).
-   */
-// E depends on column type: long or other numerics
-  public  class GrabTopN<E extends Comparable<E>> extends MRTask<GrabTopN<E>>  {
+  public  class GrabTopNPQ<E extends Comparable<E>> extends MRTask<GrabTopNPQ<E>>  {
     final String[] _columnName;   // name of column that we are grabbing top N for
-    TreeMap _sortHeap;
+    PriorityQueue _sortQueue;
     Frame _sortedOut;   // store the final result of sorting
-    final long _rowSize;   // number of top or bottom rows to keep
+    final int _rowSize;   // number of top or bottom rows to keep
     final boolean _increasing;  // sort with Top values first if true.
     boolean _csLong=false;      // chunk of interest is long
 
-    private GrabTopN(String[] columnName, long rowSize, boolean increasing) {
+    private GrabTopNPQ(String[] columnName, long rowSize, boolean increasing) {
       _columnName = columnName;
-      _rowSize = rowSize;
+      _rowSize = (int)rowSize;
       _increasing = increasing;
     }
 
     @Override public void map(Chunk cs) {
-      _sortHeap = new TreeMap();
+      _sortQueue = new PriorityQueue<RowValue<E>>(); // instantiate a priority queue
       _csLong = cs instanceof C8Chunk;
       Long startRow = cs.start();           // absolute row offset
 
-      for (int rowIndex = 0; rowIndex < cs._len; rowIndex++) {  // stuff our chunks into hashmap
+      for (int rowIndex = 0; rowIndex < cs._len; rowIndex++) {  // stuff our chunks into priorityQueue
         long absRowIndex = rowIndex+startRow;
         if (!cs.isNA(rowIndex)) { // skip NAN values
-          addOneValue(cs, rowIndex, absRowIndex, _sortHeap);
+          addOneValue(cs, rowIndex, absRowIndex, _sortQueue);
         }
       }
+    }
 
-      // reduce heap size to about rowSize
-      if (_sortHeap.size() > _rowSize) {  // chop down heap size to around _rowSize
-        reduceHeapSize(_sortHeap, _rowSize);
+    @Override public void reduce(GrabTopNPQ<E> other) {
+      this._sortQueue.addAll(other._sortQueue);
+
+      int sizesToReduce = this._sortQueue.size()-_rowSize;
+      if (sizesToReduce > 0) {
+        for (int index=0; index < sizesToReduce; index++)
+          this._sortQueue.poll();
       }
     }
 
-    @Override public void reduce(GrabTopN<E> other) {
-      this._sortHeap.putAll(other._sortHeap);
-
-      if (this._sortHeap.size() > _rowSize) {
-        reduceHeapSize(this._sortHeap, _rowSize); // shrink the heap size again.
-      }
-    }
-
-    /*
-    Copy the top/bottom N elements of the TreepMap to a frame as the final output.
-     */
     @Override public void postGlobal() {  // copy the sorted heap into a vector and make a frame out of it.
-      long rowCount = 0l; // count number of rows extracted from Heap and setting to final frame
       Vec[] xvecs = new Vec[2];   // final output frame will have two chunks, original row index, top/bottom values
-      long actualRowOutput = min(_rowSize, _sortHeap.size()); // due to NAs, may not have enough rows to return
+      long actualRowOutput = min(_rowSize, _sortQueue.size()); // due to NAs, may not have enough rows to return
       for (int index = 0; index < xvecs.length; index++)
         xvecs[index] = Vec.makeZero(actualRowOutput);
 
-      while (rowCount < actualRowOutput) {
-        if (_sortHeap.size()>0) {   // copy top/bottom N values over to vecs.
-          rowCount += addOneRow(xvecs, rowCount, actualRowOutput);
-        }
+      for (int index=0; index<actualRowOutput; index++) {
+        RowValue transport =(RowValue) this._sortQueue.poll();
+        xvecs[0].set(index, transport.getRow());
+        xvecs[1].set(index, _csLong?(Long)transport.getValue():(Double)transport.getValue());
       }
       _sortedOut = new Frame(_columnName, xvecs);
     }
 
     /*
-    The heap size is reduced to contain the desiredSize number of nodes.
-     */
-    public void reduceHeapSize(TreeMap tmap, long desiredSize) {
-      long numDelete = tmap.size()-desiredSize;
-      for (long index=0; index<numDelete; index++) {
-       if (_increasing)
-          tmap.remove(tmap.firstKey());
-        else
-          tmap.remove(tmap.lastKey());
-      }
-    }
-
-    /*
-    This function will add one value to the sorted heap.  If the values are the same, the row indices are added to the
-    value of the heap node as we use the values as the key.
-     */
-    public void addOneValue(Chunk cs, int rowIndex, long absRowIndex, TreeMap sortHeap) {
+    This function will add one value to the sorted priority queue.
+	*/
+    public void addOneValue(Chunk cs, int rowIndex, long absRowIndex, PriorityQueue sortHeap) {
+      RowValue currPair = null;
       if (_csLong) {  // long chunk
         long a = cs.at8(rowIndex);
-        if (sortHeap.containsKey(a)) {
-          ArrayList<Long> allRows = (ArrayList<Long>) sortHeap.get(a);
-          allRows.add(absRowIndex);
-          sortHeap.put(a, allRows);
-        } else {
-          ArrayList<Long> allRows = new ArrayList<Long>();
-          allRows.add(absRowIndex);
-          sortHeap.put(a, allRows);
-        }
+        currPair = new RowValue(absRowIndex, a, _increasing);
+
       } else {                      // other numeric chunk
         double a = cs.atd(rowIndex);
-        if (sortHeap.containsKey(a)) {
-          ArrayList<Long> allRows = (ArrayList<Long>) sortHeap.get(a);
-          allRows.add(absRowIndex);
-          sortHeap.put(a, allRows);
-        } else {
-          ArrayList<Long> allRows = new ArrayList<Long>();
-          allRows.add(absRowIndex);
-          sortHeap.put(a, allRows);
-        }
+        currPair = new RowValue(absRowIndex, a, _increasing);
       }
-    }
-
-    /*
-    For every heap element, we will copy over the value as the original row indices and the key the top/bottom
-    values into a Vec[] array of two columns.  First column is the original row index, and the second column
-    contains the key which is the values we desire.
-     */
-    public long addOneRow(Vec[] xvecs, long rowCount, long absMaxSize) {
-      ArrayList<Long> rowValues;
-      E key;
-      int rowIncreased = 0;
-
-      key = _increasing?(E) _sortHeap.lastKey():(E) _sortHeap.firstKey();
-/*      if (_increasing) {
-        key = (E) _sortHeap.lastKey();
-      } else {
-        key = (E) _sortHeap.firstKey();
-      }*/
-      rowValues = (ArrayList<Long>) _sortHeap.get(key);
-        _sortHeap.remove(key);
-        for (int i = 0; i < rowValues.size(); i++) {
-          xvecs[0].set(rowCount, rowValues.get(i));
-          xvecs[1].set(rowCount, _csLong?(Long) key:(Double) key);
-/*          if (_csLong)
-            xvecs[1].set(rowCount, (Long) key);
-          else
-            xvecs[1].set(rowCount, (Double) key);*/
-
-          rowCount++;
-          rowIncreased++;
-          if (rowCount >= absMaxSize)
-            return rowIncreased;
-        }
-      return rowIncreased;
+      sortHeap.offer(currPair);   // add pair to PriorityQueue
+      if (sortHeap.size() > _rowSize) {
+        sortHeap.poll();      // remove head if exceeds queue size
+      }
     }
   }
 
+  /*
+  Small class to implement priority entry is a key/value pair of original row index and the
+  corresponding value.  Implemented the compareTo function and comparison is performed on
+  the value.
+   */
+  public class RowValue<E extends Comparable<E>> implements Comparable<RowValue<E>> {
+    private Long _rowIndex;
+    private E _value;
+    boolean _increasing;  // true if grabbing for top N, false for bottom N
+
+    public RowValue(Long rowIndex, E value, boolean increasing) {
+      this._rowIndex = rowIndex;
+      this._value = value;
+      this._increasing = increasing;
+    }
+
+    public E getValue() {
+      return this._value;
+    }
+
+    public Long getRow() {
+      return this._rowIndex;
+    }
+
+    @Override public int compareTo(RowValue<E> other) {
+      return (this.getValue().compareTo(other.getValue())*(this._increasing?1:-1));
+    }
+  }
 }
