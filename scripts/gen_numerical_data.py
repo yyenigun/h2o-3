@@ -19,7 +19,7 @@ def gen_data():
     numZeros = 0
     numNans = 0   # generate Nans
     numInfs = 500
-    numRep = 4    # number of times to repeat array
+    numRep = 2    # number of times to repeat array
     csvFile = "/Users/wendycwong/temp/TopBottomNRep4.csv"
     fMult = 1.1
 

@@ -1144,7 +1144,7 @@ h2o.topBottomN <- function(x, column, nPercent, getBottom){
     colIndex = (which (column %in% cnames))-1
 
   } else {  # column is number
-    if ((column <= 0) || (column > ncol)) stop("Illegal column index")
+    if ((column <= 0) || (column > ncol(x))) stop("Illegal column index")
     colIndex = column-1
   }
 

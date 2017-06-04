@@ -4,9 +4,6 @@ sys.path.insert(1,"../../")
 import h2o
 from tests import pyunit_utils
 from random import randint
-import math
-from h2o.utils.typechecks import assert_is_type
-from h2o.frame import H2OFrame
 import numpy as np
 
 def h2o_H2OFrame_top_bottomN():
@@ -22,9 +19,9 @@ def h2o_H2OFrame_top_bottomN():
     topAnswer = h2o.import_file(pyunit_utils.locate("smalldata/jira/Top20Per.csv.zip"))
     bottomAnswer = h2o.import_file(pyunit_utils.locate("smalldata/jira/Bottom20Per.csv.zip"))
     nPercentages = [4,8,12,16]  # multiples of 4 since dataset is repeated 4 times.
-    nPercentages = [0.000625]
     frameNames = dataFrame.names    # get data column names
     tolerance=1e-12
+    nsample = 100
 
     nP = nPercentages[randint(0, len(nPercentages)-1)]  # pick a random percentage
     colIndex = randint(0, len(frameNames)-1)    # pick a random column
@@ -32,7 +29,7 @@ def h2o_H2OFrame_top_bottomN():
     newTopFrameC = dataFrame.topN(colIndex, nP)             # call topN with same column index
 
     # the two return frames should be the same for this case, compare 1000 rows chosen randomly
-    pyunit_utils.compare_frames(newTopFrame, newTopFrameC, 0, tol_numeric=tolerance)
+    pyunit_utils.compare_frames(newTopFrame, newTopFrameC, nsample, tol_numeric=tolerance)
 
     # compare one of the return frames with known answer
     compare_rep_frames(topAnswer, newTopFrame, tolerance, colIndex, 0)
@@ -44,9 +41,9 @@ def h2o_H2OFrame_top_bottomN():
     newBottomFrameC = dataFrame.bottomN(colIndex, nP)             # call topN with same column index
 
     # the two return frames should be the same for this case
-    pyunit_utils.compare_frames(newBottomFrame, newBottomFrameC, 0, tol_numeric=tolerance)
+    pyunit_utils.compare_frames(newBottomFrame, newBottomFrameC, nsample, tol_numeric=tolerance)
     # compare one of the return frames with known answer
-    compare_rep_frames(bottomAnswer, newTopFrame, tolerance, colIndex, 1)
+    compare_rep_frames(bottomAnswer, newBottomFrame, tolerance, colIndex, 1)
 
 
 def compare_rep_frames(answerF, repFrame, tolerance,  colIndex, getBottom=0):
@@ -59,11 +56,9 @@ def compare_rep_frames(answerF, repFrame, tolerance,  colIndex, getBottom=0):
     answerArray = np.transpose(answerF[colIndex].as_data_frame(header=False).values)[0]
     topBottomArray = np.transpose(repFrame[1].as_data_frame(header=False).values)[0]
 
-    np.sort(answerArray)
-    np.sort(topBottomArray)
+    answerArray=np.sort(answerArray)
+    topBottomArray=np.sort(topBottomArray)
 
-    answerArray = np.transpose(answerArray.values)[0]
-    topBottomArray = np.transpose(topBottomArray.values)[0]
     for ind in allIndex:
         assert abs(answerArray[ind]-topBottomArray[repIndex*4]) < tolerance, \
             "Expected {0}, Actual {1} .".format(answerArray[ind],topBottomArray[repIndex*4])
